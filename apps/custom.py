@@ -47,51 +47,50 @@ class SandboxGetObjectMixin:
 
 class SandboxMultipleObjectMixin:
 
-    filters = {}
     fields = []
+    search_fields = []
     queryset = None
     model = None
 
     def get_queryset(self):
         if self.queryset is not None:
             queryset = self.queryset
-            if isinstance(queryset, QuerySet):
-                queryset = queryset.all()
-        elif self.model is not None:
+        elif self.queryset is None and self.model is not None:
             queryset = self.model._default_manager.all()
         else:
             raise ImproperlyConfigured(
-                "%(cls)s is missing a QuerySet. Define "
-                "%(cls)s.model, %(cls)s.queryset."
+                "%(cls)s is missing a QuerySet. Define %(cls)s.model, %(cls)s.queryset."
                 % {'cls': self.__class__.__name__}
             )
         return queryset
 
     def get_datatables_paginator(self, request):
+
         datatables = request.GET
-        draw = int(datatables.get('draw'))
-        start = int(datatables.get('start'))
-        length = int(datatables.get('length'))
-        order_column = datatables.get('order[0][column]')
-        order_dir = datatables.get('order[0][dir]')
-        order_field = datatables.get('columns[{}][data]'.format(order_column))
+        draw = int(datatables['draw'])
+        start = int(datatables['start'])
+        length = int(datatables['length'])
+        order_column = datatables['order[0][column]']
+        order_dir = datatables['order[0][dir]']
+        order_field = datatables['columns[{}][data]'.format(order_column)]
+        search_value = datatables['search[value]']
         queryset = self.get_queryset()
+        fields = self.get_fields()
+
+        if search_value:
+            q = self.get_q(search_value)
+            queryset = queryset.filter(q)
+
         if order_dir == 'asc':
             queryset = queryset.order_by(order_field)
         else:
             queryset = queryset.order_by('-{0}'.format(order_field))
+
         record_total_count = queryset.count()
-        filters = self.get_filters()
-        fields = self.get_fields()
-        if filters:
-            queryset = queryset.filter(**self.filters)
-        if fields:
-            queryset = queryset.values(*self.fields)
+        queryset = queryset.values(*self.fields)
 
         record_filter_count = queryset.count()
-
-        object_list = queryset[start:(start + length)]
-
+        object_list = queryset[start: (start + length)]
         data = list(object_list)
 
         return {
@@ -100,12 +99,24 @@ class SandboxMultipleObjectMixin:
             'recordsFiltered': record_filter_count,
             'data': data,
         }
-
-    def get_filters(self):
-        return self.filters
-
+    
     def get_fields(self):
-        return self.fields
+        if self.fields:
+            fields = self.fields
+        else:
+            raise ImproperlyConfigured(
+                "%(cls)s is missing fields."
+                % {'cls': self.__class__.__name__}
+            )
+        return fields
+    
+    def get_q(self, search_value):
+        search_fields = self.search_fields
+        q = Q()
+        q.connector = 'OR'
+        for field in search_fields:
+            q.children.append((field + '__icontains', search_value))
+        return q
 
 
 class SandboxEditViewMixin:
